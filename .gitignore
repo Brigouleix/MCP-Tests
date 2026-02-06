@@ -1,0 +1,8 @@
+# Secrets Google
+credentials.json
+token.json
+
+# Autres fichiers souvent sensibles ou inutiles
+node_modules/
+.env
+.DS_Store
