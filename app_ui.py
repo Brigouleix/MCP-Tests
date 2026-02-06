@@ -27,7 +27,6 @@ def handle_ai_query(user_input):
             try:
                 raw_data = mcp_tools.list_emails(max_results=n)
                 parsed = []
-                # Nettoyage et parsing des lignes
                 clean_data = raw_data.replace("DATA_START", "").replace("DATA_END", "").strip()
                 lines = clean_data.split('\n')
                 
@@ -53,100 +52,79 @@ def handle_ai_query(user_input):
         if not st.session_state.email_cache:
             return "Please list your emails first (e.g., 'show my last emails')."
         
-        # Préparation du contexte pour qu'Ollama trouve l'ID
         context_str = "\n".join([f"INDEX:{i} | FROM:{e['from']} | SUBJECT:{e['subject']} | ID:{e['id']}" 
                                for i, e in enumerate(st.session_state.email_cache)])
 
-        search_prompt = f"""
-        Analyze the user's request based on this list of emails:
-        {context_str}
-
-        User Request: "{user_input}"
-        
-        Identify the correct Email ID. Return ONLY the ID. If not found, return NONE.
-        """
+        search_prompt = f"List:\n{context_str}\n\nQuery: {user_input}\n\nReturn ONLY the ID or NONE."
         
         with st.spinner("Finding email..."):
             res = ollama.chat(model='llama3.2', messages=[{"role": "user", "content": search_prompt}])
             target_id = res['message']['content'].strip()
-            
-            # Extraction propre de l'ID (au cas où l'IA bavarde)
             match = re.search(r'([a-fA-F0-9]{10,})', target_id)
+            
             if match:
                 target_id = match.group(1)
                 try:
                     analysis = mcp_tools.smart_analyze_email(target_id)
                     email_info = next((e for e in st.session_state.email_cache if e['id'] == target_id), None)
-
                     
-                    # On stocke tout dans la session pour pouvoir éditer
+                    # ON STOCKEYY DANS LA SESSION
                     st.session_state.current_analysis = {
                         "summary": analysis['summary'],
-                        "draft": analysis['draft'], # Ce texte sera modifiable
+                        "draft": analysis['draft'],
                         "original_sender": email_info['from'],
                         "original_subject": email_info['subject']
                     }
-
-                    # Affichage avec zone d'édition
-                    st.markdown("### 📝 Summary")
-                    st.info(st.session_state.current_analysis['summary'])
-
-                    st.markdown("### ✍️ Proposed Reply (You can edit below)")
-                    
-                    # La zone de texte éditable
-                    # Chaque modification de l'utilisateur met à jour st.session_state.current_analysis['draft']
-                    edited_draft = st.text_area(
-                        "Edit the draft:", 
-                        value=st.session_state.current_analysis['draft'], 
-                        height=250,
-                        key="editable_draft_area"
-                    )
-                    
-                    # Mise à jour du brouillon avec la version éditée
-                    st.session_state.current_analysis['draft'] = edited_draft
-
-                    st.warning("Type 'send' or 'yes' to send this exact version.")
-                    return "You can now edit the draft above. When ready, type 'send' to send the email."
+                    return "ANALYSIS_COMPLETE" # Signal pour l'interface
                 except Exception as e:
-                    return f"Error analyzing email: {str(e)}"
+                    return f"Error: {str(e)}"
+            else:
+                return "I couldn't find that email."
 
     # --- 3. LOGIQUE : ENVOYER ---
     elif any(x in ui_lower for x in ["send", "envoie", "confirm", "yes", "oui"]):
         if st.session_state.current_analysis:
-            # On récupère la dernière version (potentiellement éditée)
             final_text = st.session_state.current_analysis['draft']
-            
-            with st.spinner("Sending your corrected email..."):
+            with st.spinner("Sending..."):
                 res = mcp_tools.send_reply(
                     st.session_state.current_analysis['original_sender'], 
                     st.session_state.current_analysis['original_subject'], 
-                    final_text # Envoi du texte corrigé
+                    final_text
                 )
-                st.session_state.current_analysis = None
-                return f"✅ Sent successfully!"
+                st.session_state.current_analysis = None # On vide après envoi
+                return f"✅ Envoyeeyyy ! Status: {res}"
+        else:
+            return "No draft to send. Analyze an email first."
 
     # --- 4. RÉPONSE PAR DÉFAUT ---
     else:
-            # On définit un rôle strict pour éviter qu'elle ne dise "Je ne peux pas"
-            system_instruction = (
-                "You are a helpful Gmail Assistant. "
-                "I have provided you with access to the user's emails via specialized tools. "
-                "Never ever imagine a response if yuou don't find the answer, don't dare to make fictionnal resume."
-                "If the user asks about their emails and you see a list above, use that information. "
-                "Never say you don't have access to emails, because I (the system) provide them to you."
-            )
-            
-            res = ollama.chat(model='llama3.2', messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_input}
-            ])
-            return res['message']['content']
+        system_instruction = "You are a helpful Gmail Assistant. Use provided info."
+        res = ollama.chat(model='llama3.2', messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_input}
+        ])
+        return res['message']['content']
 
-# --- INTERFACE DE CHAT STREAMLIT ---
+# --- AFFICHAGE DU CHAT ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# --- INTERFACE D'ÉDITION (Toujours visible si une analyse est en cours) ---
+if st.session_state.current_analysis:
+    with st.expander("✨ Edition du brouillon en cours", expanded=True):
+        st.info(f"**Résumé :** {st.session_state.current_analysis['summary']}")
+        
+        # Le TEXT_AREA met à jour la session en direct
+        edited_text = st.text_area(
+            "Modifiez votre réponse :", 
+            value=st.session_state.current_analysis['draft'], 
+            height=200
+        )
+        st.session_state.current_analysis['draft'] = edited_text
+        st.caption("Une fois prêt, tape 'envoie' ou 'send' dans le chat ci-dessous.")
+
+# --- ENTRÉE DU CHAT ---
 if prompt := st.chat_input("Ex: Show my last 3 emails"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -154,5 +132,8 @@ if prompt := st.chat_input("Ex: Show my last 3 emails"):
 
     with st.chat_message("assistant"):
         answer = handle_ai_query(prompt)
-        st.markdown(answer)
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        if answer != "ANALYSIS_COMPLETE":
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+        else:
+            st.rerun() # On relance pour afficher l'expander d'édition
