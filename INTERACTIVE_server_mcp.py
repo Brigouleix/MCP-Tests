@@ -40,7 +40,12 @@ def list_emails(max_results: Any = 5):
 
     service = get_gmail_service()
     try:
-        results = service.users().messages().list(userId='me', maxResults=limit).execute()
+        results = service.users().messages().list(
+        userId='me', 
+        maxResults=limit, 
+        q='label:INBOX -from:me' 
+    ).execute()
+        
         messages = results.get('messages', [])
         output = "DATA_START\n"
         for msg in messages:
