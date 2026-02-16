@@ -94,18 +94,27 @@ def get_email_content(message_id: str):
 @mcp.tool()
 def send_reply(recipient: str, subject: str, body: str):
     """Send an email."""
-    match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', recipient)
-    target = match.group(0) if match else recipient.strip()
+    # Nettoyage strict pour extraire uniquement l'email
+    # Supporte "Nom <email@test.com>" ou "email@test.com"
+    email_match = re.search(r'[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}', recipient)
+    if email_match:
+        target = email_match.group(0)
+    else:
+        target = recipient.strip()
+
     service = get_gmail_service()
     message = EmailMessage()
     message.set_content(body)
     message['To'] = target
     message['From'] = 'me'
-    message['Subject'] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    # Gère le préfixe Re: proprement
+    clean_subject = subject.strip()
+    message['Subject'] = clean_subject if clean_subject.lower().startswith("re:") else f"Re: {clean_subject}"
+    
     try:
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         service.users().messages().send(userId="me", body={'raw': raw}).execute()
-        return "Envoyé avecc succeyyy !"
+        return f"✅ Email envoyé avec succès à {target}"
     except Exception as e:
         return f"FAILURE: {str(e)}"
 

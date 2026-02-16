@@ -47,39 +47,61 @@ def handle_ai_query(user_input):
             except Exception as e:
                 return f"Error accessing Gmail: {str(e)}"
 
-    # --- 2. LOGIQUE : ANALYSER / RÉSUMER ---
-    elif any(word in ui_lower for word in ["analyse", "analyze", "summarize","que dis", "résume","résumer","détail-moi", "about", "details"]):
+# --- 2. LOGIQUE : ANALYSER / RÉSUMER ---
+    elif any(word in ui_lower for word in ["analyse", "analyze", "summarize", "que dis", "résume", "détail", "about", "details"]):
         if not st.session_state.email_cache:
-            return "Please list your emails first (e.g., 'show my last emails')."
+            return "Désolé, ma liste est vide. Dis-moi 'montre mes mails' d'abord."
         
-        context_str = "\n".join([f"INDEX:{i} | FROM:{e['from']} | SUBJECT:{e['subject']} | ID:{e['id']}" 
-                               for i, e in enumerate(st.session_state.email_cache)])
+        # On prépare un contexte très clair pour Llama
+        context_str = ""
+        for i, e in enumerate(st.session_state.email_cache, 1):
+            context_str += f"CHOIX {i}: ID={e['id']} | FROM={e['from']} | SUBJECT={e['subject']}\n"
 
-        search_prompt = f"List:\n{context_str}\n\nQuery: {user_input}\n\nReturn ONLY the ID or NONE."
+        search_prompt = f"""
+        Voici la liste des emails récents :
+        {context_str}
+
+        L'utilisateur demande : "{user_input}"
+        Trouve l'ID correspondant à sa demande (il peut citer un numéro de choix, un nom ou un sujet).
+        Renvoie UNIQUEMENT l'ID technique (ex: 18db...) ou le mot NONE.
+        """
         
-        with st.spinner("Finding email..."):
+        with st.spinner("Identification de l'email..."):
             res = ollama.chat(model='llama3.2', messages=[{"role": "user", "content": search_prompt}])
             target_id = res['message']['content'].strip()
+            
+            # Nettoyage de la réponse de l'IA (parfois elle bavarde)
             match = re.search(r'([a-fA-F0-9]{10,})', target_id)
             
             if match:
                 target_id = match.group(1)
                 try:
-                    analysis = mcp_tools.smart_analyze_email(target_id)
+                    # On vérifie que l'ID existe bien dans notre cache
                     email_info = next((e for e in st.session_state.email_cache if e['id'] == target_id), None)
                     
-                    # ON STOCKEYY DANS LA SESSION
+                    if not email_info:
+                        return f"L'IA a trouvé l'ID {target_id} mais il ne correspond pas à la liste actuelle."
+
+                    analysis = mcp_tools.smart_analyze_email(target_id)
+                    
+                    # CRUCIAL : On stocke l'adresse email exacte extraite de 'from'
+                    # Souvent 'from' est "Nom <email@test.com>", on nettoie pour n'avoir que l'email
+                    raw_from = email_info['from']
+                    clean_email = re.search(r'[\w\.-]+@[\w\.-]+', raw_from)
+                    recipient = clean_email.group(0) if clean_email else raw_from
+
                     st.session_state.current_analysis = {
                         "summary": analysis['summary'],
                         "draft": analysis['draft'],
-                        "original_sender": email_info['from'],
-                        "original_subject": email_info['subject']
+                        "original_sender": recipient, # On utilise l'email propre ici
+                        "original_subject": email_info['subject'],
+                        "original_id": target_id
                     }
-                    return "ANALYSIS_COMPLETE" # Signal pour l'interface
+                    return "ANALYSIS_COMPLETE"
                 except Exception as e:
-                    return f"Error: {str(e)}"
+                    return f"Erreur lors de l'analyse : {str(e)}"
             else:
-                return "I couldn't find that email."
+                return "Je n'ai pas compris de quel email tu parles. Peux-tu préciser (ex: 'le mail de Jean' ou 'le mail numéro 2') ?"
 
     # --- 3. LOGIQUE : ENVOYER ---
     elif any(x in ui_lower for x in ["send", "envoie", "confirm", "yes", "oui"]):
@@ -125,7 +147,7 @@ if st.session_state.current_analysis:
         st.caption("Une fois prêt, tape 'envoie' ou 'send' dans le chat ci-dessous.")
 
 # --- ENTRÉE DU CHAT ---
-if prompt := st.chat_input("Ex: Show my last 3 emails"):
+if prompt := st.chat_input("Ex: Montre moi mes 3 derniers "):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)

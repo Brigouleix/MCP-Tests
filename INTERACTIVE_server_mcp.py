@@ -97,8 +97,6 @@ def send_reply(recipient: str, subject: str, body: str):
     except Exception as e:
         return f"FAILURE: {str(e)}"
     
-# Ajoute ces lignes dans server_mcp.py
-import ollama
 
 def _ask_llama(content, prompt_type="summary"):
     """Fonction interne pour interroger Llama 3.2"""
@@ -136,3 +134,4 @@ def smart_analyze_email(message_id: str):
 
 if __name__ == "__main__":
     mcp.run()
+    
